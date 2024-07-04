@@ -11,38 +11,62 @@ library(cartogram)
 library(deldir)
 
 # 1. Elabore un objeto sf con las coordenadas latitud/longitud del edificio del CONEVAL. Utilice el crs 4326 (lat/lon). 
+coordenadas_coneval <- c(19.38984574857503, -99.1735048796959)
+
+# data.frame(latitud = coordenadas_coneval[1], 
+#            longitud = coordenadas_coneval[2])
+# tibble(latitud = coordenadas_coneval[1], 
+#        longitud = coordenadas_coneval[2])
+
 punto_coneval <- tibble(latitud = coordenadas_coneval[1], 
                         longitud = coordenadas_coneval[2]) %>% 
   st_as_sf(coords = c("longitud", "latitud"), 
            crs = 4326)
+
+# plot(punto_coneval, max.plot = 1)
+# leaflet(punto_coneval) %>% 
+#   addTiles() %>% 
+#   addMarkers()
+
 
 # 2. Cambie el sistema de coordenadas de referencia al sistema 6362. 
 punto_coneval_utm <- punto_coneval %>% 
   st_transform(crs = 6362)
 
 # 3. Con este nuevo crs, elabore un buffer de un kilómetro alrededor del punto del CONEVAL. 
-buffer_coneval <- st_buffer(punto_coneval_utm, dist = 1000) %>% 
+buffer_coneval <- st_buffer(punto_coneval_utm, dist = 1000)%>%
   st_transform(crs = 4326)
 
 leaflet(buffer_coneval) %>% 
   addProviderTiles("CartoDB.Positron") %>% 
-  addPolygons()
+  addPolygons() %>% 
+  addCircleMarkers(data = punto_coneval)
 
 # 4. A partir de este buffer, obtenga todas las taquerías que se encuentran a un kilómetro alrededor del CONEVAL.
 taquerias <- read_csv("01_Datos/taquerias.csv") %>% 
   st_as_sf(coords = c("longitud", "latitud"), crs = 4326)
 class(taquerias) # Si es sf!
 
+plot(taquerias, max.plot = 1)
+
 taquerias_coneval <- st_intersection(taquerias, buffer_coneval) 
+unique(taquerias_coneval$nombre_act)
 
 taquerias_coneval %>% 
   leaflet() %>% 
   addProviderTiles("CartoDB.Positron") %>% 
   addPolygons(data = buffer_coneval, color = "gray") %>% 
-  addCircleMarkers()
+  addCircleMarkers(label = taquerias_coneval$nom_estab)
 
 # 5. Elabore un mapa en leaflet donde las taquerías tomen un color dependiendo del número de empleados que tienen. 
 unique(taquerias_coneval$per_ocu)
+
+taquerias_coneval$per_ocu <- factor(taquerias_coneval$per_ocu, 
+                                    levels = c("0 a 5 personas", 
+                                               "6 a 10 personas", 
+                                               "11 a 30 personas", 
+                                               "51 a 100 personas"))
+
 pal_taquerias <- colorFactor(domain = taquerias_coneval$per_ocu, 
                              palette = wesanderson::wes_palettes$Zissou1)
 
@@ -60,6 +84,8 @@ taquerias_coneval %>%
 
 colonias <- read_sf("01_Datos/georef-mexico-colonia.geojson") %>% st_make_valid()
 secciones <- read_sf("01_Datos/secciones_electorales_cdmx.geojson")
+
+plot(secciones, max.plot = 1)
 
 colonia_coneval <- st_intersects(punto_coneval, colonias)[[1]]
 seccion_coneval <- st_intersects(punto_coneval, secciones)[[1]]
@@ -84,7 +110,6 @@ colonias_buffer_coneval %>%
   addPolygons(data = buffer_coneval) %>% 
   addPolygons(color = "purple", label = colonias_buffer_coneval$col_name) 
   
-# colonia_mas_grande <- 
   colonias_buffer_coneval %>% 
     mutate(areas = st_area(.)) %>% 
     arrange(-areas) %>% 
@@ -95,9 +120,8 @@ colonias_buffer_coneval %>%
   colonias_buffer_coneval %>% 
     transmute(col_name, areas = st_area(.)) 
   
-  
 # 8. ¿Qué es más grande, una sección o una colonia? Para todas las colonias que están a un kilómetro del CONEVAL, determine a que secciones irán a votar sus habitantes.   
-secciones_coneval_colonias <- st_intersects(colonias_buffer_coneval, secciones) %>% 
+secciones_coneval_colonias <- st_intersects(buffer_coneval, secciones) %>% 
   unlist() %>% 
   unique()
 
@@ -105,6 +129,7 @@ secciones_coneval_colonias <- secciones[secciones_coneval_colonias,]
 
 leaflet() %>% 
   addProviderTiles("CartoDB.Positron") %>% 
+  # addPolygons(data = colonias_buffer_coneval, color = "purple") %>% 
   addPolygons(data = secciones_coneval_colonias, color = "green", 
               label = secciones_coneval_colonias$seccion)
 
@@ -116,13 +141,9 @@ punto_cancino <- tibble(latitud = 19.420310541166778,
   st_as_sf(coords = c("longitud", "latitud"), 
            crs = 4326)
 
-
 st_distance(punto_cancino, punto_coneval) # 3,45 km en línea recta
 
-
 # 10. ¿Y siguiendo la ruta en la calle? 
-
-
 trayecto_cancino_coneval <- osrm::osrmRoute(punto_coneval, punto_cancino)
 trayecto_cancino_coneval_utm <- st_transform(trayecto_cancino_coneval, crs = 6362)
 
@@ -138,11 +159,17 @@ isocronas <- ors_isochrones(locations =  list(punto_partida),
                             profile = "driving-car",
                             range = c(1800), 
                             output = "sf") # 600s y 1200s (10 y 20 minutos)
+
+isocronas2 <- ors_isochrones(locations =  list(punto_partida),
+                            profile = "foot-walking",
+                            range = c(1800, 600), 
+                            output = "sf") # 600s y 1200s (10 y 20 minutos)
+
 plot(isocronas, max.plot = 1)
 
-# 60*30
+?ors_isochrones
 
-isocronas %>% 
+isocronas2 %>% 
   leaflet() %>%
   addTiles() %>% 
   addMarkers(data = punto_coneval) %>% 
@@ -150,37 +177,41 @@ isocronas %>%
   addPolygons()
 
 # 12. Elabore un mapa hexbin de las taquerías de la Ciudad de México. 
-taquerias <- taquerias %>% 
-  cbind(taquerias %>% 
-          st_coordinates() %>% 
-          as_tibble())
+# taquerias <- taquerias %>% 
+#   cbind(taquerias %>% 
+#           st_coordinates() %>% 
+#           as_tibble())
+
+taquerias <- read_csv("01_Datos/taquerias.csv") %>% 
+  rename(Y = latitud, X = longitud)
+
+# taquerias %>% names()
 
 municipios <- st_read("01_Datos/municipios_2022.geojson") %>% 
   filter(CVE_ENT == "09")
 
 ggplot() + 
-  geom_hex(data = taquerias %>%
-             as_tibble() %>%
-             select(-geometry), 
+  geom_hex(data = taquerias,
            aes(x = X, y = Y, fill = ..count..),
            bins = 50) + 
   geom_sf(data = municipios, fill = NA, color = "red") +
     scale_fill_viridis_c() +
     theme_minimal()
-  
 
 # 13. Elabore un cartograma de Dorling con el tamaño de la Lista Nominal de cada uno de los municipios del estado de Puebla.
 munis_puebla <- st_read("01_Datos/municipios_2022.geojson") %>% 
-  filter(CVE_ENT == "21")
+  filter(CVE_ENT == "15")
 datos_prep <- read_csv("01_Datos/prep_municipal.csv")
 mapx <- left_join(munis_puebla, datos_prep, by = c("CVEGEO" = "CVE_INEGI")) %>% 
-  st_transform(crs =6362 )
+  st_transform(crs =6362)
 
 dorling <- cartogram_dorling(x = mapx, weight = "lista_nominal" ) %>% 
   st_transform(crs = 4326) %>% 
   mutate(X = st_centroid(.) %>% st_coordinates() %>% as_tibble() %>% pull("X"), 
          Y = st_centroid(.) %>% st_coordinates() %>% as_tibble() %>% pull("Y")) %>% 
-  mutate(etiqueta = ifelse(lista_nominal > 200000, yes = str_c(NOMGEO, "\n", prettyNum(lista_nominal, big.mark = ",")), no = ""))
+  mutate(etiqueta = ifelse(lista_nominal > 200000, 
+                           yes = str_c(NOMGEO, "\n", prettyNum(lista_nominal, big.mark = ",")), 
+                           no = ""))
 
 dorling %>% 
   ggplot() +
@@ -194,10 +225,20 @@ dorling %>%
             family = "Arial")
 
 # 14. Elabore un mapa de polígonos de Voronoi para determinar que Costcos están más cerca de cada punto de la Ciudad de México. 
+poligonos_cdmx <- read_sf("https://raw.githubusercontent.com/JuveCampos/Shapes_Resiliencia_CDMX_CIDE/master/geojsons/Division%20Politica/DivisionEstatal.geojson") %>% 
+  filter(CVE_EDO == "09")
+
 costcos <- read_csv("01_Datos/costcos.csv") %>%
   st_as_sf(coords = c("longitud", "latitud"),
-           crs = 4326) 
-v <- deldir(costcos_csv$longitud, costcos_csv$latitud)
+           crs = 4326)
+
+costcos_csv <- read_csv("01_Datos/costcos.csv") %>% 
+  slice(st_intersects(poligonos_cdmx, costcos) %>% unlist())
+
+st_bbox(poligonos_cdmx)
+
+v <- deldir(costcos_csv$longitud, costcos_csv$latitud, 
+            rw = c(-99.36438, -98.94051, 19.04886, 19.59220))
 
 voronoi_to_sf <- function(voronoi) {
   library(sp)
@@ -213,9 +254,6 @@ voronoi_to_sf <- function(voronoi) {
   st_crs(sf_polys) <- 4326
   return(sf_polys)
 }
-
-poligonos_cdmx <- read_sf("https://raw.githubusercontent.com/JuveCampos/Shapes_Resiliencia_CDMX_CIDE/master/geojsons/Division%20Politica/DivisionEstatal.geojson") %>% 
-  filter(CVE_EDO == "09")
 
 poligonos_voronoi <- voronoi_to_sf(voronoi = v)
 
