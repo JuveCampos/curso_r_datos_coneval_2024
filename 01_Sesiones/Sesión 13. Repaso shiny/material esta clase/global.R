@@ -1,0 +1,239 @@
+# Opciones ----
+Sys.setlocale("LC_TIME", "es_ES")
+# Sys.setlocale("LC_TIME", "es_ES.UTF-8")
+Sys.setlocale("LC_TIME", "español")
+
+
+options(scipen=999)
+
+# Librerias ----
+library(tidyverse)
+library(ggrepel)
+library(scales)
+
+# 01. Datos ----
+datos <- readRDS("datos_inflacion.rds") %>% 
+    as_tibble()
+# PREGUNTA 1. ¿Qué es el formato rds? ¿Qué ventajas tiene con respecto al excel o al csv? 
+
+# Fecha máxima y quincena máxima: 
+maxima_fecha <- datos$date %>% max() # Obtiene la fecha máxima con información disponible
+v_quincena   <- datos %>% filter(date == maxima_fecha) %>% pull(quincena) %>% max() # Obtiene la quincena máxima con información disponible
+
+# 02. Controles: ----
+sel_genericos <- unique(datos$ccif) %>% sort() # Obtenemos el vector de genéricos para generar el control
+
+# 03. Gráficas ----
+
+## 03.1 Gráfica de evolución ----
+
+# Argumentos de prueba
+# genericos = c("Total", "Renta de vivienda", "Ron")
+# fecha_inicio = "2015-06-01"
+gen_grafica <- function(genericos, fecha_inicio = "2015-06-01"){
+    eje_y <- "Índice base 2ª quincena de julio 2018 = 100"
+    nota <- "*Las desagregaciones del INPC solo tienen valor informativo."
+    
+    # PREGUNTA 2: ¿Qué hice aquí? Tip. Cuando es quincena 1, se toma como inflacion a la 1a quincena. Cuando es 2, es la inflación de todo el mes.  
+    subtitulo <- str_c(ifelse(v_quincena == 1, 
+                              yes = "A la 1ª quincena de ", 
+                              no = "Al mes de "), 
+                       str_replace_all(month(maxima_fecha),
+                           c("^1$" = "enero", 
+                                         "^2$" = "febrero", 
+                                         "^3$" = "marzo", 
+                                         "^4$" = "abril", 
+                                         "^5$" = "mayo", 
+                                         "^6$" = "junio", 
+                                         "^7$" = "julio", 
+                                         "^8$" = "agosto",
+                                         "^9$" = "septiembre", 
+                                         "^10$" = "octubre", 
+                                         "^11$" = "noviembre", 
+                                         "^12$" = "diciembre")),
+                       " del ", year(maxima_fecha))
+    
+    fyvs <- datos %>% 
+        as_tibble() %>% 
+        filter(ccif %in% genericos) %>% 
+        mutate(ccif = ifelse(ccif == "Total", yes = "General", no = ccif)) %>% 
+        select(date_shortcut, ccif, fecha = date, values) %>% 
+        filter(fecha >= fecha_inicio) %>% 
+        {if(v_quincena == 1){
+            filter(., !date_shortcut %% 2 == 0)
+        } else {
+            filter(., !date_shortcut %% 2 == 1)
+        }} %>% 
+        mutate(grosor = ifelse(ccif == "General", yes = "General", no = "Genéricos")) %>% 
+        group_by(ccif) %>%
+        arrange(fecha) %>% 
+        mutate(tasa = (values/lag(values, 12))-1) %>% 
+        mutate(cat = str_c(ccif, "\n", 
+                           format(round(values, 1), nsmall = 1) %>% str_squish(), 
+                           " [", format(round(tasa*100, 1), nsmall = 1) %>% str_squish(), "%]")) %>% 
+        mutate(ccif = factor(ccif, levels = genericos %>% str_replace_all(c("Total" = "General"))))
+    
+    g <- fyvs %>% 
+        ggplot(aes(x = fecha, 
+                   y = values, 
+                   group = ccif, 
+                   color = ccif)) +
+        geom_line(aes(linewidth = grosor),
+                  lineend = "round",
+                  show.legend = F) +
+        geom_point(data = fyvs %>% filter(fecha == max(fecha)) %>% unique(),
+                   size = 2.5,
+                   show.legend = F) +
+        geom_text_repel(data = fyvs %>% filter(fecha == max(fecha)) %>% unique(),
+                        aes(label = cat,
+                            fontface = grosor), 
+                        direction = "y",
+                        family = "Arial", 
+                        nudge_x = 100, 
+                        hjust = "left",
+                        size = 5,
+                        segment.curvature = -0.1,
+                        segment.ncp = 3,
+                        segment.angle = 20,
+                        segment.color = NA) + 
+        scale_discrete_manual(aesthetics = "linewidth", values = c(1,2)) + 
+        scale_discrete_manual(aesthetics = "fontface", values = c("bold","bold")) + 
+        scale_color_manual(values = rainbow(n = length(genericos))) +
+        scale_x_datetime(
+            date_labels = "%b %y",
+            breaks = seq.POSIXt(from = max(fyvs$fecha), 
+                                to = min(fyvs$fecha), 
+                                by = "-6 month"),
+            expand = expansion(mult = c(0.02, 0.15))
+        ) + 
+        scale_y_continuous(expand = expansion(c(0.1, 0.1))) + 
+        theme_minimal() +
+        labs(
+            title = "Índice de precios al consumidor de\ngenéricos seleccionados",
+            subtitle = subtitulo, 
+            caption = nota,
+            color="", shape="", y = eje_y
+        ) +
+        theme(plot.title = element_text(size = 30, face = "bold", colour = "#6950D8"),
+              plot.title.position = "plot",
+              plot.subtitle = element_text(size = 30, colour = "#777777", margin=margin(0,0,30,0)),
+              plot.caption = element_text(size = 25, colour = "#777777"),
+              plot.margin= margin(0.3, 0.4, 1.5, 0.3, "cm"), # margin(top,right, bottom,left)
+              panel.grid.minor  = element_blank(),
+              panel.background = element_rect(fill = "transparent",colour = NA),
+              text = element_text(family = "Arial"),
+              axis.title.x = element_blank(),
+              axis.title.y = element_text(size = 25),
+              axis.text.x = element_text(size = 20, angle = 90, vjust = 0.5),
+              axis.text.y = element_text(size = 20),
+              legend.text = element_text(size = 30),
+              legend.position = "none")
+    g
+}
+
+# PREGUNTA 2. VERIFIQUE QUE LA FUNCIÓN gen_grafica() FUNCIONE, probandola con un genérico (o más) del vector sel_genericos
+# genericos = c("Aceites y grasas")
+gen_barras_cambio_anual <- function(genericos, fecha_inicio = "2015-06-01"){
+    nota <- "*Las desagregaciones del INPC solo tienen valor informativo."
+    subtitulo <- str_c(ifelse(v_quincena == 1, 
+                              yes = "A la 1ª quincena de ", 
+                              no = "Al mes de "), 
+                       str_replace_all(month(maxima_fecha),
+                                       c("^1$" = "enero", 
+                                         "^2$" = "febrero", 
+                                         "^3$" = "marzo", 
+                                         "^4$" = "abril", 
+                                         "^5$" = "mayo", 
+                                         "^6$" = "junio", 
+                                         "^7$" = "julio", 
+                                         "^8$" = "agosto",
+                                         "^9$" = "septiembre", 
+                                         "^10$" = "octubre", 
+                                         "^11$" = "noviembre", 
+                                         "^12$" = "diciembre")),
+                       " del ", 
+                       year(maxima_fecha))
+    dpl <- datos %>% 
+        as_tibble() %>% 
+        filter(ccif %in% genericos) %>% 
+        mutate(ccif = ifelse(ccif == "Total", yes = "General", no = ccif)) %>% 
+        select(date_shortcut, ccif, fecha = date, values) %>% 
+        filter(fecha >= fecha_inicio) %>% 
+        {if(v_quincena == 1){
+            filter(., !date_shortcut %% 2 == 0)
+        } else {
+            filter(., !date_shortcut %% 2 == 1)
+        }} %>% 
+        mutate(grosor = ifelse(ccif == "General", yes = "General", no = "Genéricos")) %>% 
+        arrange(fecha) %>% 
+        group_by(ccif) %>%
+        mutate(tasa = (values/lag(values, 12))-1) %>% 
+        mutate(cat = str_c(ccif, "\n", 
+                           format(round(values, 1), nsmall = 1) %>% str_squish(), 
+                           " [", format(round(tasa*100, 1), nsmall = 1) %>% str_squish(), "%]")) %>% 
+        filter(fecha == max(fecha)) %>% 
+        filter(date_shortcut == max(date_shortcut)) %>%
+        mutate(ccif = factor(ccif, levels = genericos %>%
+                                 str_replace_all(c("^Total$" = "General")) %>% rev()))
+    
+    
+    if(sum(dpl$tasa < 0) > 0){
+        expansiones = c(0.2, 0.2)
+    } else {
+        expansiones = c(0, 0.2)
+    }
+    
+    tamanio_letra <- case_when(length(genericos) <= 1 ~ 8,
+                              between(length(genericos), 2,3)  ~ 6,
+                              between(length(genericos), 4,10)  ~ 5,
+                              length(genericos) > 10 ~ 2
+                              )
+    
+    
+    
+    dpl %>% 
+        ggplot(aes(x = ccif, y = tasa*100, fill = ccif, color = ccif)) + 
+        geom_col() + 
+        geom_text(aes(label = str_c(round(tasa*100, 1), "%"), 
+                      hjust = as.character(sign(tasa))), 
+                  size = tamanio_letra,
+                  color = "black",
+                  fontface = "bold", 
+                  family = "Arial") + 
+        geom_hline(yintercept = 0, color = "black") +
+        scale_discrete_manual(aesthetics = "hjust", values = c("1" = -0.1,
+                                                               "-1" = 1.1)) + 
+        scale_y_continuous(expand = expansion(expansiones), 
+                           labels = scales::comma_format(suffix = "%")) + 
+        coord_flip() + 
+        theme_minimal() +
+        labs(
+            title = "Inflación anual en genéricos seleccionados",
+            x = "Genéricos\nseleccionados\n",
+            subtitle = subtitulo, 
+            caption = nota,
+            color="", shape=""
+        ) +
+        
+        scale_fill_manual(values = rainbow(n = length(genericos)) %>% rev()) +
+        scale_color_manual(values = rainbow(n = length(genericos)) %>% rev()) +
+        theme(plot.title = element_text(size = 30, face = "bold", colour = "#6950D8"),
+              plot.title.position = "plot",
+              plot.subtitle = element_text(size = 30, colour = "#777777", margin=margin(0,0,30,0)),
+              plot.caption = element_text(size = 25, colour = "#777777"),
+              plot.margin= margin(0.3, 0.4, 1.5, 0.3, "cm"), # margin(top,right, bottom,left)
+              panel.grid.minor  = element_blank(),
+              panel.background = element_rect(fill = "transparent",colour = NA),
+              text = element_text(family = "Arial"),
+              axis.title.x = element_blank(),
+              axis.title.y = element_text(size = 25),
+              axis.text.x = element_text(size = 20, angle = 0, vjust = 0.5),
+              axis.text.y = element_text(size = 20),
+              legend.text = element_text(size = 30),
+              legend.position = "none")
+    
+}
+
+
+# PREGUNTA 3. VERIFIQUE QUE LA FUNCIÓN gen_barras_cambio() FUNCIONE, probandola con un genérico (o más) del vector sel_genericos
+# PREGUNTA 4. HAY ALGUNA FUNCIÓN O ALGUNA PARTE DEL CÓDIGO QUE NO ENTIENDA? PREGUNTE ANTES DE QUE LE PREGUNTEN A USTED :9
